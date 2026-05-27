@@ -202,24 +202,20 @@ def train(config: Config) -> None:
     print(f"Device: {device}" if device.type != "cuda" else f"Device: {torch.cuda.get_device_name(0)}")
     print(f"Diffusion steps: {config.diffusion.timesteps} | Sampler: {config.diffusion.sampler}")
 
-    # --- torch.compile (skip on T4/V100 — large matmuls don't benefit) ---
+    # --- torch.compile (fuses ops → fewer CPU→GPU dispatches) ---
     if device.type == "cuda":
-        gpu_name = torch.cuda.get_device_name(0)
-        if "T4" not in gpu_name and "V100" not in gpu_name:
-            try:
-                model = torch.compile(diffusion.model)
-                diffusion.model = model
-                _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
-                _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
-                with torch.no_grad():
-                    diffusion.model(_dummy_x, _dummy_t)
-                print("torch.compile: enabled")
-            except Exception as e:
-                print(f"torch.compile: skipped ({e})")
-        else:
-            print(f"torch.compile: off (not beneficial on {gpu_name})")
+        try:
+            model = torch.compile(diffusion.model, mode="reduce-overhead")
+            diffusion.model = model
+            _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
+            _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
+            with torch.no_grad():
+                diffusion.model(_dummy_x, _dummy_t)
+            print("torch.compile: enabled")
+        except Exception as e:
+            print(f"torch.compile: skipped ({e})")
     else:
-        print("torch.compile: off (MPS/CPU — not worth the RAM cost)")
+        print("torch.compile: off (MPS/CPU)")
 
     # --- Optimizer (fused Adam reduces kernel launches on GPU) ---
     optimizer = Adam(model.parameters(), lr=cfg.learning_rate, betas=cfg.adam_betas, fused=True)
