@@ -171,8 +171,13 @@ def train(config: Config) -> None:
     # MPS:   float32  (autocast overhead hurts MPS)
     # CPU:   float32
     if device.type == "cuda":
-        # Check if bfloat16 is actually supported on this GPU
-        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        gpu_name = torch.cuda.get_device_name(0)
+        if torch.cuda.is_bf16_supported():
+            amp_dtype = torch.bfloat16
+        elif "T4" in gpu_name or "V100" in gpu_name:
+            amp_dtype = torch.float16
+        else:
+            amp_dtype = torch.float16  # safe default
         use_amp = True
     else:
         amp_dtype = torch.float32
@@ -196,7 +201,7 @@ def train(config: Config) -> None:
     print(f"AMP: {amp_dtype}" if use_amp else "AMP: off")
     print(f"FLOPs/batch (fwd+bwd): {flops_per_batch / 1e9:.2f}G (traced)")
     print(f"Batches per epoch: {batches_per_epoch}")
-    print(f"Device: {device}")
+    print(f"Device: {device}" if device.type != "cuda" else f"Device: {torch.cuda.get_device_name(0)}")
     print(f"Diffusion steps: {config.diffusion.timesteps} | Sampler: {config.diffusion.sampler}")
 
     # --- torch.compile (skip on MPS — kernel cache burns shared RAM) ---
