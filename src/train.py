@@ -167,17 +167,15 @@ def train(config: Config) -> None:
         model(dummy_x, dummy_t)
 
     # --- Autocast dtype ---
-    # CUDA:  bfloat16 if supported (A100/H100), else float16 (T4/V100)
-    # MPS:   float32  (autocast overhead hurts MPS)
-    # CPU:   float32
     if device.type == "cuda":
         gpu_name = torch.cuda.get_device_name(0)
-        if torch.cuda.is_bf16_supported():
-            amp_dtype = torch.bfloat16
-        elif "T4" in gpu_name or "V100" in gpu_name:
+        # T4/V100: no bfloat16 hardware — force float16 regardless of driver report
+        if "T4" in gpu_name or "V100" in gpu_name:
             amp_dtype = torch.float16
+        elif torch.cuda.is_bf16_supported():
+            amp_dtype = torch.bfloat16
         else:
-            amp_dtype = torch.float16  # safe default
+            amp_dtype = torch.float16
         use_amp = True
     else:
         amp_dtype = torch.float32
@@ -204,18 +202,22 @@ def train(config: Config) -> None:
     print(f"Device: {device}" if device.type != "cuda" else f"Device: {torch.cuda.get_device_name(0)}")
     print(f"Diffusion steps: {config.diffusion.timesteps} | Sampler: {config.diffusion.sampler}")
 
-    # --- torch.compile (skip on MPS — kernel cache burns shared RAM) ---
+    # --- torch.compile (skip on T4/V100 — large matmuls don't benefit) ---
     if device.type == "cuda":
-        try:
-            model = torch.compile(diffusion.model)
-            diffusion.model = model
-            _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
-            _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
-            with torch.no_grad():
-                diffusion.model(_dummy_x, _dummy_t)
-            print("torch.compile: enabled")
-        except Exception as e:
-            print(f"torch.compile: skipped ({e})")
+        gpu_name = torch.cuda.get_device_name(0)
+        if "T4" not in gpu_name and "V100" not in gpu_name:
+            try:
+                model = torch.compile(diffusion.model)
+                diffusion.model = model
+                _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
+                _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
+                with torch.no_grad():
+                    diffusion.model(_dummy_x, _dummy_t)
+                print("torch.compile: enabled")
+            except Exception as e:
+                print(f"torch.compile: skipped ({e})")
+        else:
+            print(f"torch.compile: off (not beneficial on {gpu_name})")
     else:
         print("torch.compile: off (MPS/CPU — not worth the RAM cost)")
 

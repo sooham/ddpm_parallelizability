@@ -120,10 +120,10 @@ class TrainingConfig:
     device: str = "cuda"
 
     # DataLoader subprocesses (increase for GPU; 0 = main-process only)
-    num_workers: int = 4
+    num_workers: int = 2
 
     # Pin CPU memory for faster GPU transfer (only meaningful for CUDA)
-    pin_memory: bool = True
+    pin_memory: bool = False
 
     # Mixed precision training
     use_amp: bool = False
