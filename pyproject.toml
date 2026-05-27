@@ -4,12 +4,21 @@ version = "0.1.0"
 description = "DDPM/DDIM experiments on MNIST and CIFAR-10"
 requires-python = ">=3.10"
 dependencies = [
-    "torch",
-    "torchvision",
     "datasets",
     "matplotlib",
+    "torch",
+    "torchvision",
     "wandb",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cuda" }
+torchvision = { index = "pytorch-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
 
 [dependency-groups]
 dev = []

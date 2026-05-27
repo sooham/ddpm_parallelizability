@@ -54,7 +54,8 @@ def create_dataloader(
     batch_size: int = 128,
     split: str = "train",
     shuffle: bool = True,
-    num_workers: int = 0,
+    num_workers: int = 4,
+    pin_memory: bool = True,
     cache_dir: str = "./datasets",
 ) -> DataLoader:
     """Create a DataLoader for the specified dataset.
@@ -65,7 +66,8 @@ def create_dataloader(
         batch_size: Number of samples per batch.
         split: "train" or "test".
         shuffle: Whether to shuffle examples.
-        num_workers: Number of dataloader subprocesses (0 recommended for MPS).
+        num_workers: Number of dataloader subprocesses (4 is good for T4 GPU).
+        pin_memory: Pin CPU memory for faster CUDA transfers.
         cache_dir: HuggingFace dataset cache directory.
 
     Returns:
@@ -78,6 +80,6 @@ def create_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        pin_memory=False,
+        pin_memory=pin_memory,
         drop_last=True,
     )

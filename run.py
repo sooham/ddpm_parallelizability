@@ -41,7 +41,7 @@ def main():
                         help="Fraction of steps for linear warmup")
     parser.add_argument("--lr-decay-pct", type=float, default=0.90,
                         help="Fraction of steps where LR reaches min")
-    parser.add_argument("--device", type=str, default="mps",
+    parser.add_argument("--device", type=str, default="cuda",
                         choices=["mps", "cuda", "cpu"],
                         help="Device to use")
 
@@ -130,6 +130,8 @@ def main():
             lr_warmup_pct=args.lr_warmup_pct,
             lr_decay_pct=args.lr_decay_pct,
             device=args.device,
+            num_workers=4,
+            pin_memory=True,
             wandb_project=args.wandb_project,
             wandb_entity=args.wandb_entity,
             save_every=args.save_every,

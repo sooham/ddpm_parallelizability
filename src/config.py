@@ -116,8 +116,14 @@ class TrainingConfig:
     # How many samples to generate for logging
     num_samples: int = 16
 
-    # Device: "mps", "cuda", or "cpu"
-    device: str = "mps"
+    # Device: "cuda", "mps", or "cpu"
+    device: str = "cuda"
+
+    # DataLoader subprocesses (increase for GPU; 0 = main-process only)
+    num_workers: int = 4
+
+    # Pin CPU memory for faster GPU transfer (only meaningful for CUDA)
+    pin_memory: bool = True
 
     # Mixed precision training
     use_amp: bool = False

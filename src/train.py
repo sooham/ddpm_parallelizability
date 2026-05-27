@@ -132,7 +132,8 @@ def train(config: Config) -> None:
         batch_size=cfg.batch_size,
         split="train",
         shuffle=True,
-        num_workers=0,
+        num_workers=cfg.num_workers,
+        pin_memory=cfg.pin_memory,
         cache_dir="./datasets",
     )
 
@@ -146,7 +147,8 @@ def train(config: Config) -> None:
         batch_size=cfg.batch_size,
         split="test",
         shuffle=False,
-        num_workers=0,
+        num_workers=cfg.num_workers,
+        pin_memory=cfg.pin_memory,
         cache_dir="./datasets",
     )
     test_size = len(test_loader.dataset)
