@@ -205,7 +205,8 @@ def train(config: Config) -> None:
     # --- torch.compile (fuses ops → fewer CPU→GPU dispatches) ---
     if device.type == "cuda":
         try:
-            model = torch.compile(diffusion.model, mode="reduce-overhead")
+            # default mode: operator fusion without CUDA-graph memory overhead
+            model = torch.compile(diffusion.model)
             diffusion.model = model
             _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
             _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
