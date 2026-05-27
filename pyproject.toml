@@ -1,0 +1,15 @@
+[project]
+name = "ddpm-parallelizability"
+version = "0.1.0"
+description = "DDPM/DDIM experiments on MNIST and CIFAR-10"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "torchvision",
+    "datasets",
+    "matplotlib",
+    "wandb",
+]
+
+[dependency-groups]
+dev = []
