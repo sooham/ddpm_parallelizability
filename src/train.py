@@ -167,18 +167,19 @@ def train(config: Config) -> None:
         model(dummy_x, dummy_t)
 
     # --- Autocast dtype ---
-    # CUDA:  bfloat16 (native tensor cores) — autocast gives 2-4× speedup
-    # MPS:   float32  (MPS is optimised for fp32; autocast/scaler overhead hurts)
+    # CUDA:  bfloat16 if supported (A100/H100), else float16 (T4/V100)
+    # MPS:   float32  (autocast overhead hurts MPS)
     # CPU:   float32
     if device.type == "cuda":
-        amp_dtype = torch.bfloat16
+        # Check if bfloat16 is actually supported on this GPU
+        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         use_amp = True
     else:
         amp_dtype = torch.float32
         use_amp = False
 
     diffusion = GaussianDiffusion(model, config.diffusion).to(device)
-    scaler = None  # only needed for fp16, which we don't use
+    scaler = torch.amp.GradScaler(device.type) if (use_amp and amp_dtype == torch.float16) else None
 
     total_params = sum(p.numel() for p in model.parameters())
     batches_per_epoch = len(train_loader)
