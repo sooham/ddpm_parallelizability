@@ -207,8 +207,8 @@ def train(config: Config) -> None:
         try:
             model = torch.compile(diffusion.model, mode="default")
             diffusion.model = model
-            # Warmup: trigger compilation for both forward AND backward
-            _dummy_x = torch.randn(cfg.batch_size, in_channels, cfg.image_size, cfg.image_size, device=device, dtype=amp_dtype if use_amp else torch.float32)
+            # Warmup with float32 data (autocast handles fp16 internally during training)
+            _dummy_x = torch.randn(cfg.batch_size, in_channels, cfg.image_size, cfg.image_size, device=device)
             _dummy_t = torch.randint(0, config.diffusion.timesteps, (_dummy_x.shape[0],), device=device)
             _loss, _ = diffusion.training_loss(_dummy_x)
             _loss.backward()
