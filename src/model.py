@@ -449,14 +449,14 @@ class MLPDenoiser(nn.Module):
 
 
 class _ResMLPBlock(nn.Module):
-    """Residual MLP block with time conditioning.
+    """Residual MLP block with FiLM time conditioning.
 
     Structure:
         Linear(in_dim, hidden_dim)
-        + time projection (add)
-        -> Activation
-        -> Dropout
-        -> Linear(hidden_dim, hidden_dim)
+        → FiLM (scale + shift from time embedding)
+        → Activation
+        → Dropout
+        → Linear(hidden_dim, hidden_dim)
         + residual connection (with projection if dims differ)
     """
 
@@ -474,7 +474,7 @@ class _ResMLPBlock(nn.Module):
         self.time_dim = time_dim
 
         self.linear1: nn.Linear | None = None
-        self.time_proj = nn.Linear(time_dim, hidden_dim)
+        self.time_proj = nn.Linear(time_dim, 2 * hidden_dim)  # scale + shift
         self.act = activation
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.linear2: nn.Linear | None = None
@@ -486,7 +486,7 @@ class _ResMLPBlock(nn.Module):
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.linear1 = nn.Linear(in_dim, hidden_dim, device=device)
-        self.time_proj = nn.Linear(self.time_dim, hidden_dim, device=device)
+        self.time_proj = nn.Linear(self.time_dim, 2 * hidden_dim, device=device)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim, device=device)
         self.skip = (
             nn.Linear(in_dim, hidden_dim, device=device)
@@ -497,7 +497,10 @@ class _ResMLPBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
         h = self.linear1(x)
-        h = h + self.time_proj(t_emb)
+        # FiLM: time embedding → scale + shift (2× more expressive than add)
+        scale_shift = self.time_proj(t_emb)
+        scale, shift = scale_shift.chunk(2, dim=-1)
+        h = h * (1.0 + scale) + shift
         h = self.act(h)
         h = self.dropout(h)
         h = self.linear2(h)
