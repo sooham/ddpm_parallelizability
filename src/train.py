@@ -147,8 +147,8 @@ def train(config: Config) -> None:
         batch_size=cfg.batch_size,
         split="test",
         shuffle=False,
-        num_workers=cfg.num_workers,
-        pin_memory=cfg.pin_memory,
+        num_workers=0,
+        pin_memory=False,
         cache_dir="./datasets",
     )
     test_size = len(test_loader.dataset)
@@ -205,14 +205,16 @@ def train(config: Config) -> None:
     # --- torch.compile (fuses ops → fewer CPU→GPU dispatches) ---
     if device.type == "cuda":
         try:
-            # default mode: operator fusion without CUDA-graph memory overhead
-            model = torch.compile(diffusion.model)
+            model = torch.compile(diffusion.model, mode="default")
             diffusion.model = model
-            _dummy_x = torch.randn(1, in_channels, cfg.image_size, cfg.image_size, device=device)
-            _dummy_t = torch.randint(0, config.diffusion.timesteps, (1,), device=device)
-            with torch.no_grad():
-                diffusion.model(_dummy_x, _dummy_t)
-            print("torch.compile: enabled")
+            # Warmup: trigger compilation for both forward AND backward
+            _dummy_x = torch.randn(cfg.batch_size, in_channels, cfg.image_size, cfg.image_size, device=device, dtype=amp_dtype if use_amp else torch.float32)
+            _dummy_t = torch.randint(0, config.diffusion.timesteps, (_dummy_x.shape[0],), device=device)
+            _loss, _ = diffusion.training_loss(_dummy_x)
+            _loss.backward()
+            for p in model.parameters():
+                p.grad = None
+            print("torch.compile: enabled (fwd+bwd compiled)")
         except Exception as e:
             print(f"torch.compile: skipped ({e})")
     else:
