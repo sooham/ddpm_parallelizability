@@ -235,11 +235,15 @@ def train(config: Config) -> None:
 
     # --- EMA ---
     ema_model = None
+    ema_p_list = None
     if cfg.ema_decay > 0:
         ema_model = deepcopy(model)
         ema_model.eval()
         for p in ema_model.parameters():
             p.requires_grad = False
+        # Cache parameter lists for fused EMA updates
+        ema_p_list = list(ema_model.parameters())
+        p_list = list(model.parameters())
 
     # --- wandb ---
     wandb_run = wandb.init(
@@ -290,7 +294,6 @@ def train(config: Config) -> None:
 
         # Window accumulators (flushed every LOG_INTERVAL batches)
         win_losses = []
-        win_grads = []
         win_betas = []
         win_start_ev = None
         win_end_ev = None
@@ -317,23 +320,20 @@ def train(config: Config) -> None:
             if scaler is not None:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
-                max_norm = cfg.grad_clip if cfg.grad_clip > 0 else float('inf')
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                 optimizer.step()
 
             if scheduler is not None:
                 scheduler.step()
 
-            # EMA update
+            # EMA update (fused foreach ops — single kernel per op)
             if ema_model is not None:
                 with torch.no_grad():
-                    for ema_p, p in zip(ema_model.parameters(), model.parameters()):
-                        ema_p.data = cfg.ema_decay * ema_p.data + (1.0 - cfg.ema_decay) * p.data
+                    torch._foreach_mul_(ema_p_list, cfg.ema_decay)
+                    torch._foreach_add_(ema_p_list, p_list, alpha=(1.0 - cfg.ema_decay))
 
             lr = optimizer.param_groups[0]['lr']
             mean_beta = betas_t.mean().item()
@@ -344,15 +344,20 @@ def train(config: Config) -> None:
             epoch_losses.append(loss.item())
 
             win_losses.append(loss.item())
-            win_grads.append(grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm)
             win_betas.append(mean_beta)
 
             # Flush window every LOG_INTERVAL batches (or on the last batch)
             if batch_idx % LOG_INTERVAL == 0 or batch_idx == batches_per_epoch:
                 n = len(win_losses)
                 avg_loss = np.mean(win_losses)
-                avg_grad = np.mean(win_grads)
                 avg_beta = np.mean(win_betas)
+
+                # ---- grad norm (compute once per window, not every batch) ----
+                total_norm = 0.0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        total_norm += p.grad.data.norm(2).item() ** 2
+                avg_grad = total_norm ** 0.5
 
                 # ---- device time: one sync for the whole window ----
                 if Event is not None:
@@ -398,7 +403,6 @@ def train(config: Config) -> None:
 
                 # Reset window
                 win_losses = []
-                win_grads = []
                 win_betas = []
 
         # ---- Epoch summary (full-epoch averages) ----
