@@ -249,13 +249,13 @@ class GaussianDiffusion(nn.Module):
     @torch.no_grad()
     def _ddim_sample(self, shape: tuple, device: torch.device) -> torch.Tensor:
         """Full DDIM reverse process using skipped steps."""
-        ddim_steps = self.config.ddim_steps
+        ddim_steps = min(self.config.ddim_steps, self.T)
         eta = self.config.ddim_eta
 
         # Create evenly spaced timestep trajectory
-        step_ratio = self.T // ddim_steps
-        times = list(reversed(range(0, self.T, step_ratio)))  # e.g., [950, 900, ..., 50, 0]
-        times_next = times[1:] + [0]  # times_prev
+        step_ratio = max(1, self.T // ddim_steps)
+        times = list(reversed(range(0, self.T, step_ratio)))
+        times_next = times[1:] + [0]
 
         x = torch.randn(shape, device=device)
 
