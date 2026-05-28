@@ -412,8 +412,8 @@ class MLPDenoiser(nn.Module):
         # Per-pixel projection: scalar pixel value → pixel_dim vector
         self.pixel_proj = nn.Linear(C, pixel_dim, device=x.device)
 
-        # Input: pixel_dim * H * W (each pixel embedded to pixel_dim, then position added, then flattened)
-        self.input_proj = nn.Linear(pixel_dim * H * W, hidden_dims[0], device=x.device)
+        # Input: 2 * pixel_dim * H * W (pixel embedding concatenated with position embedding)
+        self.input_proj = nn.Linear(2 * pixel_dim * H * W, hidden_dims[0], device=x.device)
         self.output_proj = nn.Linear(hidden_dims[-1], flat_dim, device=x.device)
 
         for i, block in enumerate(self.blocks):
@@ -431,9 +431,9 @@ class MLPDenoiser(nn.Module):
         # Reshape to pixels: (B, H*W, C)
         pixels = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
 
-        # Per-pixel learned embedding + sinusoidal position encoding
-        h = self.pixel_proj(pixels) + self.pos_embed.unsqueeze(0)  # (B, H*W, pixel_dim)
-        h = h.reshape(B, -1)  # (B, pixel_dim * H * W)
+        # Per-pixel learned embedding + sinusoidal position encoding (concatenated, not added)
+        h = torch.cat([self.pixel_proj(pixels), self.pos_embed.unsqueeze(0).expand(B, -1, -1)], dim=-1)
+        h = h.reshape(B, -1)  # (B, 2*pixel_dim * H * W)
 
         # Time embedding
         t_emb = self.time_embed(t)
