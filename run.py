@@ -18,7 +18,7 @@ def main():
 
     # Dataset
     parser.add_argument("--dataset", type=str, default="cifar10",
-                        choices=["mnist", "cifar10"],
+                        choices=["mnist", "cifar10", "circle"],
                         help="Dataset to train on")
     parser.add_argument("--image-size", type=int, default=None,
                         help="Image size (default: 28 for MLP, 32 for UNet)")
