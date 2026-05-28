@@ -1,6 +1,5 @@
 """Dataset loading and preprocessing for MNIST, CIFAR-10, and a synthetic circle dataset."""
 
-import math
 from typing import Literal
 
 import torch
@@ -10,53 +9,41 @@ from torch.utils.data import DataLoader, Dataset
 
 
 class CircleDataset(Dataset):
-    """Synthetic 28×28 grayscale images of a circle with random radius / position.
+    """Synthetic 28×28 grayscale images of a single fixed white ring.
 
-    Each sample is a white ring on a black background, normalised to [-1, 1].
-    Useful for smoke-testing the diffusion model.
+    Every sample is identical: a ring of given radius/thickness on a black
+    background, normalised to [-1, 1].  Useful for smoke-testing the diffusion
+    model — if the model can't denoise a single image, nothing else will work.
     """
 
     def __init__(
         self,
         size: int = 28,
         num_samples: int = 60000,
-        min_radius: float = 0.15,
-        max_radius: float = 0.40,
-        thickness: float = 0.04,
-        seed: int = 42,
+        radius: float = 0.30,
+        thickness: float = 0.06,
+        cx: float = 0.0,
+        cy: float = 0.0,
     ):
         self.size = size
         self.num_samples = num_samples
-        self.min_radius = min_radius
-        self.max_radius = max_radius
-        self.thickness = thickness
-        self.rng = torch.Generator().manual_seed(seed)
 
-        # Pre-compute a coordinate grid once
+        # Build the one shared image
         ys = torch.linspace(-1, 1, size)
         xs = torch.linspace(-1, 1, size)
-        self.Y, self.X = torch.meshgrid(ys, xs, indexing="ij")  # (H, W)
+        Y, X = torch.meshgrid(ys, xs, indexing="ij")
+        D = torch.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
+        inner = radius - thickness / 2
+        outer = radius + thickness / 2
+        img = ((D >= inner) & (D <= outer)).float()
+        img = img * 2.0 - 1.0         # [0,1] → [-1, 1]
+        self.img = img.unsqueeze(0)   # (1, H, W)
 
     def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, idx: int) -> torch.Tensor:
-        # Random circle parameters
-        r = self.min_radius + (self.max_radius - self.min_radius) * torch.rand(1, generator=self.rng).item()
-        dx = 0.15 * torch.randn(1, generator=self.rng).item()
-        dy = 0.15 * torch.randn(1, generator=self.rng).item()
-
-        # Distance from centre (dx, dy)
-        D = torch.sqrt((self.X - dx) ** 2 + (self.Y - dy) ** 2)
-
-        # Ring: 1 inside the ring, 0 elsewhere
-        inner = r - self.thickness / 2
-        outer = r + self.thickness / 2
-        img = ((D >= inner) & (D <= outer)).float()
-
-        # Normalise to [-1, 1]
-        img = img * 2.0 - 1.0
-        return img.unsqueeze(0)  # (1, H, W)
+        return self.img.clone()
 
 
 class HFDiffusionDataset(Dataset):
