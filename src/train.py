@@ -126,14 +126,17 @@ def train(config: Config) -> None:
     set_seed(cfg.seed)
 
     # --- Data ---
+    # MPS/CPU can't use multiprocessing; CUDA can
+    nw = 0 if device.type != "cuda" else cfg.num_workers
+    pin = cfg.pin_memory and device.type == "cuda"
     train_loader = create_dataloader(
         name=cfg.dataset,
         image_size=cfg.image_size,
         batch_size=cfg.batch_size,
         split="train",
         shuffle=True,
-        num_workers=cfg.num_workers,
-        pin_memory=cfg.pin_memory,
+        num_workers=nw,
+        pin_memory=pin,
         cache_dir="./datasets",
     )
 
