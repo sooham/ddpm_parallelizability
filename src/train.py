@@ -438,6 +438,9 @@ def train(config: Config) -> None:
         samples = generate_samples(diffusion, (n, in_channels, cfg.image_size, cfg.image_size), device)
         diffusion.model = original_model
 
+        # Quick sanity: are we getting real images or noise?
+        print(f"  Samples: min={samples.min().item():.2f} max={samples.max().item():.2f} unique={samples.unique().numel()}/{samples.numel()}")
+
         grid = _make_image_grid(samples)
         wandb_run.log({
             "samples": wandb.Image(grid, caption=f"Epoch {epoch}"),
