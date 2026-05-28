@@ -517,6 +517,9 @@ class _ResMLPBlock(nn.Module):
         self.hidden_dim = hidden_dim
         self.linear1 = nn.Linear(in_dim, hidden_dim, device=device)
         self.time_proj = nn.Linear(self.time_dim, 2 * hidden_dim, device=device)
+        # Zero-init: FiLM starts as identity, time modulation activates gradually
+        nn.init.zeros_(self.time_proj.weight)
+        nn.init.zeros_(self.time_proj.bias)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim, device=device)
         self.skip = (
             nn.Linear(in_dim, hidden_dim, device=device)
