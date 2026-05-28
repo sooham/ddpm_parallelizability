@@ -350,6 +350,35 @@ class UNet(nn.Module):
 #  MLP Denoiser (for simple datasets like MNIST)
 # ---------------------------------------------------------------------------
 
+class SimpleMLP(nn.Module):
+    """Dead-simple 3-layer MLP denoiser for smoke-testing.
+
+    No FiLM, no residuals, no position encoding — just raw flattened pixels
+    with the normalised timestep concatenated as a single scalar.  Designed
+    to converge to near-zero loss on trivial datasets like circle.
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        in_channels = config.in_channels
+        # input: flat pixels + timestep scalar
+        self.net = nn.Sequential(
+            nn.Linear(in_channels * 28 * 28 + 1, 1024),
+            nn.GELU(),
+            nn.Linear(1024, 1024),
+            nn.GELU(),
+            nn.Linear(1024, in_channels * 28 * 28),
+        )
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+        flat = x.reshape(B, -1)
+        t_scalar = t.float().unsqueeze(1)  # raw timestep, model learns scale
+        h = torch.cat([flat, t_scalar], dim=-1)
+        out = self.net(h)
+        return out.reshape(B, C, H, W)
+
+
 class MLPDenoiser(nn.Module):
     """Dense denoiser for DDPM/DDIM — predicts noise from flattened images + timestep.
 
@@ -401,6 +430,83 @@ class MLPDenoiser(nn.Module):
         self.pos_coords = torch.stack([ys.reshape(-1), xs.reshape(-1)], dim=-1)  # (H*W, 2)
 
         # Input: pixel value + (y, x) → 3 values per pixel
+        self.input_proj = nn.Linear(flat_dim + 2 * H * W, hidden_dims[0], device=x.device)
+        self.output_proj = nn.Linear(hidden_dims[-1], flat_dim, device=x.device)
+
+        for i, block in enumerate(self.blocks):
+            in_dim = hidden_dims[i - 1] if i > 0 else hidden_dims[0]
+            block.build(in_dim, hidden_dims[i], x.device)
+
+        self._built = True
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+        if not self._built:
+            self._build(x)
+
+        flat = x.reshape(B, -1)
+        pos = self.pos_coords.unsqueeze(0).expand(B, -1, -1).reshape(B, -1)
+        h = self.input_proj(torch.cat([flat, pos], dim=-1))
+
+        t_emb = self.time_embed(t)
+        t_emb = self.time_proj(t_emb)
+
+        for block in self.blocks:
+            h = block(h, t_emb)
+
+        out = self.output_proj(h)
+        return out.reshape(B, C, H, W)
+
+
+class MLPDenoiser(nn.Module):
+    """Dense denoiser for DDPM/DDIM — predicts noise from flattened images + timestep.
+
+    Pixel (y, x) coordinates are concatenated to the flattened input so the
+    model knows spatial position.  FiLM-conditioned residual MLP blocks with
+    zero-initialised time projections for stable training.
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+
+        in_channels = config.in_channels
+        hidden_dims = config.mlp_hidden_dims
+        time_dim = config.mlp_time_dim
+        activation = config.mlp_activation
+
+        # Time embedding
+        self.time_embed = TimeEmbedding(config.model_channels, config.model_channels)
+        time_out = config.model_channels * 4
+        self.time_proj = nn.Linear(time_out, time_dim)
+
+        if activation == "gelu":
+            self.act = nn.GELU()
+        elif activation == "relu":
+            self.act = nn.ReLU()
+        elif activation == "silu":
+            self.act = nn.SiLU()
+
+        self.input_proj: nn.Linear | None = None
+        self.output_proj: nn.Linear | None = None
+
+        self.blocks = nn.ModuleList()
+        for _ in hidden_dims:
+            self.blocks.append(_ResMLPBlock(1, 1, time_dim, self.act, config.dropout))
+
+        self.pos_coords: torch.Tensor | None = None
+        self._built = False
+
+    def _build(self, x: torch.Tensor) -> None:
+        B, C, H, W = x.shape
+        flat_dim = C * H * W
+        hidden_dims = self.config.mlp_hidden_dims
+        time_dim = self.config.mlp_time_dim
+
+        ys = torch.arange(H, dtype=torch.float32, device=x.device).unsqueeze(1).expand(H, W) / H
+        xs = torch.arange(W, dtype=torch.float32, device=x.device).unsqueeze(0).expand(H, W) / W
+        self.pos_coords = torch.stack([ys.reshape(-1), xs.reshape(-1)], dim=-1)
+
         self.input_proj = nn.Linear(flat_dim + 2 * H * W, hidden_dims[0], device=x.device)
         self.output_proj = nn.Linear(hidden_dims[-1], flat_dim, device=x.device)
 
@@ -507,5 +613,7 @@ def create_model(config: ModelConfig) -> nn.Module:
         return UNet(config)
     elif config.model_type == "mlp":
         return MLPDenoiser(config)
+    elif config.model_type == "simple":
+        return SimpleMLP(config)
     else:
         raise ValueError(f"Unknown model_type: {config.model_type}")

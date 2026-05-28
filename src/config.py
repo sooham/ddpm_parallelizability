@@ -9,7 +9,7 @@ class ModelConfig:
     """Model architecture hyperparameters."""
 
     # Model type: "unet" (convolutional) or "mlp" (dense layers for simple data like MNIST)
-    model_type: Literal["unet", "mlp"] = "unet"
+    model_type: Literal["unet", "mlp", "simple"] = "unet"
 
     # Input/output channels (set automatically from dataset: 1 for MNIST, 3 for CIFAR-10)
     in_channels: int = 3

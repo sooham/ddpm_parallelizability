@@ -47,8 +47,8 @@ def main():
 
     # Model
     parser.add_argument("--model-type", type=str, default="unet",
-                        choices=["unet", "mlp"],
-                        help="Model architecture: 'unet' (convolutional) or 'mlp' (dense, for MNIST)")
+                        choices=["unet", "mlp", "simple"],
+                        help="Model architecture: 'unet' (convolutional), 'mlp' (dense+FiLM), 'simple' (plain MLP for debugging)")
     parser.add_argument("--model-channels", type=int, default=128,
                         help="Base model channels (UNet only)")
     parser.add_argument("--channel-mult", type=int, nargs="+", default=[1, 2, 2, 2],
@@ -96,7 +96,7 @@ def main():
     # Auto-detect image size: MLP uses native 28 for MNIST (no upscale needed),
     # UNet needs power-of-2 size for downsampling layers.
     if args.image_size is None:
-        args.image_size = 28 if args.model_type == "mlp" else 32
+        args.image_size = 28 if args.model_type in ("mlp", "simple") else 32
 
     config = Config(
         model=ModelConfig(
