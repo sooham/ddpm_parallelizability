@@ -74,11 +74,12 @@ class GaussianDiffusion(nn.Module):
             betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod),
         )
 
-        # Pre-compute DDPM sampling coefficients
-        self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / alphas))
+        # Pre-compute DDPM sampling coefficients (Ho et al. Algorithm 2, Eq. 11)
+        # x0_pred = x_t / √ᾱ_t  -  √(1-ᾱ_t)/√ᾱ_t · ε_θ
+        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
         self.register_buffer(
-            "coeff_eps",
-            betas / torch.sqrt(1.0 - alphas_cumprod),
+            "coeff_x0_eps",
+            torch.sqrt(1.0 - alphas_cumprod) / torch.sqrt(alphas_cumprod),
         )
 
     def q_sample(self, x0: torch.Tensor, t: torch.Tensor, noise: torch.Tensor | None = None) -> torch.Tensor:
@@ -149,15 +150,15 @@ class GaussianDiffusion(nn.Module):
             x_{t-1}: (B, C, H, W) denoised image for the previous timestep.
         """
         betas_t = self.betas[t_index]
-        sqrt_recip_alpha_t = self.sqrt_recip_alphas[t_index]
-        coeff_eps_t = self.coeff_eps[t_index]
+        sqrt_recip_alpha_cumprod_t = self.sqrt_recip_alphas_cumprod[t_index]
+        coeff_x0_eps_t = self.coeff_x0_eps[t_index]
 
         # Predict noise
         eps = self.model(x_t, t)
 
-        # Estimate x_0
-        # x_0 = (x_t - √(1-ᾱ_t) · ε_θ) / √ᾱ_t
-        x0_pred = sqrt_recip_alpha_t * x_t - coeff_eps_t * eps
+        # Estimate x_0 (Ho et al. Eq. 11)
+        # x0 = (x_t − √(1−ᾱ_t)·ε_θ) / √ᾱ_t
+        x0_pred = sqrt_recip_alpha_cumprod_t * x_t - coeff_x0_eps_t * eps
 
         # Clamp x0_pred for stability (optional, from DDPM paper)
         x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
