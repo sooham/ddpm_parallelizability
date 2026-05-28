@@ -353,9 +353,9 @@ class UNet(nn.Module):
 class MLPDenoiser(nn.Module):
     """Dense denoiser for DDPM/DDIM — predicts noise from flattened images + timestep.
 
-    Each pixel is projected to a learned embedding, then sinusoidal 2D position
-    encoding is added so the model knows spatial location.  FiLM-conditioned
-    residual MLP blocks process all pixels jointly.
+    Pixel (y, x) coordinates are concatenated to the flattened input so the
+    model knows spatial position.  FiLM-conditioned residual MLP blocks with
+    zero-initialised time projections for stable training.
     """
 
     def __init__(self, config: ModelConfig):
@@ -367,14 +367,11 @@ class MLPDenoiser(nn.Module):
         time_dim = config.mlp_time_dim
         activation = config.mlp_activation
 
-        # Time embedding (same sinusoidal + MLP style as UNet)
+        # Time embedding
         self.time_embed = TimeEmbedding(config.model_channels, config.model_channels)
         time_out = config.model_channels * 4
-
-        # Project time embedding to match hidden dims
         self.time_proj = nn.Linear(time_out, time_dim)
 
-        # Activation function
         if activation == "gelu":
             self.act = nn.GELU()
         elif activation == "relu":
@@ -382,38 +379,29 @@ class MLPDenoiser(nn.Module):
         elif activation == "silu":
             self.act = nn.SiLU()
 
-        # Input/output projections — built lazily on first forward (needs image shape)
         self.input_proj: nn.Linear | None = None
         self.output_proj: nn.Linear | None = None
-        self.pixel_proj: nn.Linear | None = None  # per-pixel scalar → embedding
 
-        # Residual MLP blocks (built lazily)
         self.blocks = nn.ModuleList()
         for _ in hidden_dims:
-            self.blocks.append(
-                _ResMLPBlock(1, 1, time_dim, self.act, config.dropout)
-            )
+            self.blocks.append(_ResMLPBlock(1, 1, time_dim, self.act, config.dropout))
 
-        self.pos_embed: torch.Tensor | None = None  # frozen sinusoidal
+        self.pos_coords: torch.Tensor | None = None
         self._built = False
 
     def _build(self, x: torch.Tensor) -> None:
-        """Lazily build input/output projections based on input shape."""
         B, C, H, W = x.shape
         flat_dim = C * H * W
-        pixel_dim = 8  # small per-pixel embedding size
-
         hidden_dims = self.config.mlp_hidden_dims
         time_dim = self.config.mlp_time_dim
 
-        # Sinusoidal 2D position embedding (frozen, same dim as pixel embedding)
-        self.pos_embed = _make_2d_sincos_pos_embed(H, W, pixel_dim).to(x.device)  # (H*W, pixel_dim)
+        # Normalised (y, x) coordinates for each pixel
+        ys = torch.arange(H, dtype=torch.float32, device=x.device).unsqueeze(1).expand(H, W) / H
+        xs = torch.arange(W, dtype=torch.float32, device=x.device).unsqueeze(0).expand(H, W) / W
+        self.pos_coords = torch.stack([ys.reshape(-1), xs.reshape(-1)], dim=-1)  # (H*W, 2)
 
-        # Per-pixel projection: scalar pixel value → pixel_dim vector
-        self.pixel_proj = nn.Linear(C, pixel_dim, device=x.device)
-
-        # Input: 2 * pixel_dim * H * W (pixel embedding concatenated with position embedding)
-        self.input_proj = nn.Linear(2 * pixel_dim * H * W, hidden_dims[0], device=x.device)
+        # Input: pixel value + (y, x) → 3 values per pixel
+        self.input_proj = nn.Linear(flat_dim + 2 * H * W, hidden_dims[0], device=x.device)
         self.output_proj = nn.Linear(hidden_dims[-1], flat_dim, device=x.device)
 
         for i, block in enumerate(self.blocks):
@@ -424,58 +412,21 @@ class MLPDenoiser(nn.Module):
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
-
         if not self._built:
             self._build(x)
 
-        # Reshape to pixels: (B, H*W, C)
-        pixels = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
+        flat = x.reshape(B, -1)
+        pos = self.pos_coords.unsqueeze(0).expand(B, -1, -1).reshape(B, -1)
+        h = self.input_proj(torch.cat([flat, pos], dim=-1))
 
-        # Per-pixel learned embedding + sinusoidal position encoding (concatenated, not added)
-        h = torch.cat([self.pixel_proj(pixels), self.pos_embed.unsqueeze(0).expand(B, -1, -1)], dim=-1)
-        h = h.reshape(B, -1)  # (B, 2*pixel_dim * H * W)
-
-        # Time embedding
         t_emb = self.time_embed(t)
         t_emb = self.time_proj(t_emb)
 
-        # Input projection
-        h = self.input_proj(h)
-
-        # Residual MLP blocks
         for block in self.blocks:
             h = block(h, t_emb)
 
-        # Output projection
         out = self.output_proj(h)
-        out = out.reshape(B, C, H, W)
-
-        return out
-
-
-def _make_2d_sincos_pos_embed(H: int, W: int, embed_dim: int) -> torch.Tensor:
-    """Return (H*W, embed_dim) sinusoidal 2D position embeddings.
-
-    Half the dimensions encode y-positions, half encode x-positions.
-    """
-    dim_half = embed_dim // 2
-    ys = torch.arange(H, dtype=torch.float32)
-    xs = torch.arange(W, dtype=torch.float32)
-
-    def encode_1d(pos, dim):
-        div = torch.exp(torch.arange(0, dim, 2) * (-torch.log(torch.tensor(10000.0)) / dim))
-        out = torch.zeros(len(pos), dim)
-        out[:, 0::2] = torch.sin(pos.unsqueeze(1) * div)
-        out[:, 1::2] = torch.cos(pos.unsqueeze(1) * div)
-        return out
-
-    ye = encode_1d(ys, dim_half)  # (H, dim_half)
-    xe = encode_1d(xs, dim_half)  # (W, dim_half)
-
-    ye = ye.unsqueeze(1).expand(H, W, dim_half).reshape(H * W, dim_half)
-    xe = xe.unsqueeze(0).expand(H, W, dim_half).reshape(H * W, dim_half)
-
-    return torch.cat([ye, xe], dim=-1)  # (H*W, embed_dim)
+        return out.reshape(B, C, H, W)
 
 
 class _ResMLPBlock(nn.Module):
@@ -517,7 +468,6 @@ class _ResMLPBlock(nn.Module):
         self.hidden_dim = hidden_dim
         self.linear1 = nn.Linear(in_dim, hidden_dim, device=device)
         self.time_proj = nn.Linear(self.time_dim, 2 * hidden_dim, device=device)
-        # Zero-init: FiLM starts as identity, time modulation activates gradually
         nn.init.zeros_(self.time_proj.weight)
         nn.init.zeros_(self.time_proj.bias)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim, device=device)
