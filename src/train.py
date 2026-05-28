@@ -441,8 +441,7 @@ def train(config: Config) -> None:
         grid = _make_image_grid(samples)
         wandb_run.log({
             "samples": wandb.Image(grid, caption=f"Epoch {epoch}"),
-            "train/epoch": epoch,
-        })
+        }, step=global_step + 1)
 
         # --- Save checkpoint ---
         if cfg.checkpoint and (epoch % cfg.save_every == 0 or epoch == cfg.epochs):
