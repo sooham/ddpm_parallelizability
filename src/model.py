@@ -361,9 +361,12 @@ class SimpleMLP(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         in_channels = config.in_channels
-        # input: flat pixels + timestep scalar
+        # Sinusoidal time embedding → 64 dims (much richer than raw scalar)
+        self.time_embed = TimeEmbedding(config.model_channels, config.model_channels)
+        # input: flat pixels (784) + time embedding (model_channels*4=512) = 1296
+        time_emb_dim = config.model_channels * 4
         self.net = nn.Sequential(
-            nn.Linear(in_channels * 28 * 28 + 1, 1024),
+            nn.Linear(in_channels * 28 * 28 + time_emb_dim, 1024),
             nn.GELU(),
             nn.Linear(1024, 1024),
             nn.GELU(),
@@ -373,8 +376,8 @@ class SimpleMLP(nn.Module):
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         flat = x.reshape(B, -1)
-        t_scalar = t.float().unsqueeze(1)  # raw timestep, model learns scale
-        h = torch.cat([flat, t_scalar], dim=-1)
+        t_emb = self.time_embed(t)  # (B, 4*model_channels)
+        h = torch.cat([flat, t_emb], dim=-1)
         out = self.net(h)
         return out.reshape(B, C, H, W)
 
