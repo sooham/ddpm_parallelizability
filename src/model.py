@@ -569,6 +569,19 @@ class _ResMLPBlock(nn.Module):
         + residual connection (with projection if dims differ)
     """
 
+class _ResMLPBlock(nn.Module):
+    """Residual MLP block with FiLM time conditioning and pre-norm LayerNorm.
+
+    Structure (DiT-style):
+        LayerNorm → Linear(in_dim, hidden_dim)
+        → FiLM (scale + shift from time embedding)
+        → Activation → Linear(hidden_dim, hidden_dim)
+        + residual connection (with projection if dims differ)
+
+    LayerNorm before the block stabilises training and prevents dead gradients
+    from the FiLM conditioning.
+    """
+
     def __init__(
         self,
         in_dim: int,
@@ -587,6 +600,7 @@ class _ResMLPBlock(nn.Module):
         self.act = activation
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.linear2: nn.Linear | None = None
+        self.norm: nn.LayerNorm | None = None
 
         self.skip: nn.Module | None = None
         self._built = False
@@ -599,6 +613,7 @@ class _ResMLPBlock(nn.Module):
         nn.init.zeros_(self.time_proj.weight)
         nn.init.zeros_(self.time_proj.bias)
         self.linear2 = nn.Linear(hidden_dim, hidden_dim, device=device)
+        self.norm = nn.LayerNorm(in_dim, device=device)
         self.skip = (
             nn.Linear(in_dim, hidden_dim, device=device)
             if in_dim != hidden_dim
@@ -607,8 +622,9 @@ class _ResMLPBlock(nn.Module):
         self._built = True
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-        h = self.linear1(x)
-        # FiLM: time embedding → scale + shift (2× more expressive than add)
+        # Pre-norm (DiT-style): normalise before block, not after
+        h = self.norm(x)
+        h = self.linear1(h)
         scale_shift = self.time_proj(t_emb)
         scale, shift = scale_shift.chunk(2, dim=-1)
         h = h * (1.0 + scale) + shift
