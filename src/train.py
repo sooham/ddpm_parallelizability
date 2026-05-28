@@ -16,6 +16,9 @@ from .dataset import create_dataloader
 from .diffusion import GaussianDiffusion
 from .model import create_model
 
+# Enable TF32 tensor cores on Ampere+ GPUs (RTX 30xx, A100, etc.) — ~2× matmul speed
+torch.set_float32_matmul_precision('high')
+
 
 def set_seed(seed: int) -> None:
     """Set random seeds for reproducibility."""
