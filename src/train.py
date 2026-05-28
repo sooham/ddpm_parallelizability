@@ -208,6 +208,17 @@ def train(config: Config) -> None:
     print(f"Device: {device}" if device.type != "cuda" else f"Device: {torch.cuda.get_device_name(0)}")
     print(f"Diffusion steps: {config.diffusion.timesteps} | Sampler: {config.diffusion.sampler}")
 
+    # --- EMA (must be created BEFORE torch.compile — deepcopy of compiled model breaks) ---
+    ema_model = None
+    ema_p_list = None
+    if cfg.ema_decay > 0:
+        ema_model = deepcopy(model)
+        ema_model.eval()
+        for p in ema_model.parameters():
+            p.requires_grad = False
+        ema_p_list = list(ema_model.parameters())
+        p_list = list(model.parameters())
+
     # --- torch.compile (fuses ops → fewer CPU→GPU dispatches) ---
     if device.type == "cuda":
         try:
@@ -237,18 +248,6 @@ def train(config: Config) -> None:
               f"decay={cfg.lr_decay_pct:.0%} | max={cfg.lr_max:.1e} | min={cfg.lr_min:.1e}")
     else:
         scheduler = None
-
-    # --- EMA ---
-    ema_model = None
-    ema_p_list = None
-    if cfg.ema_decay > 0:
-        ema_model = deepcopy(model)
-        ema_model.eval()
-        for p in ema_model.parameters():
-            p.requires_grad = False
-        # Cache parameter lists for fused EMA updates
-        ema_p_list = list(ema_model.parameters())
-        p_list = list(model.parameters())
 
     # --- wandb ---
     wandb_run = wandb.init(
