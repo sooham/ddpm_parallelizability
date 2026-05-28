@@ -351,34 +351,53 @@ class UNet(nn.Module):
 # ---------------------------------------------------------------------------
 
 class SimpleMLP(nn.Module):
-    """Dead-simple 3-layer MLP denoiser for smoke-testing.
+    """Simple MLP denoiser with FiLM time conditioning (no skip connections).
 
-    No FiLM, no residuals, no position encoding — just raw flattened pixels
-    with the normalised timestep concatenated as a single scalar.  Designed
-    to converge to near-zero loss on trivial datasets like circle.
+    FiLM modulates hidden features via scale+shift from the time embedding.
+    No skip connections (unlike MLPDenoiser) to avoid dead-gradient issues.
     """
 
     def __init__(self, config: ModelConfig):
         super().__init__()
         in_channels = config.in_channels
-        # Sinusoidal time embedding → 64 dims (much richer than raw scalar)
+        pixel_dim = in_channels * 28 * 28
+        hidden = 1024
+
         self.time_embed = TimeEmbedding(config.model_channels, config.model_channels)
-        # input: flat pixels (784) + time embedding (model_channels*4=512) = 1296
-        time_emb_dim = config.model_channels * 4
-        self.net = nn.Sequential(
-            nn.Linear(in_channels * 28 * 28 + time_emb_dim, 1024),
-            nn.GELU(),
-            nn.Linear(1024, 1024),
-            nn.GELU(),
-            nn.Linear(1024, in_channels * 28 * 28),
-        )
+        time_dim = config.model_channels * 4
+        self.time_proj = nn.Linear(time_dim, hidden)
+
+        self.in_proj = nn.Linear(pixel_dim, hidden)
+        self.l1 = nn.Linear(hidden, hidden)
+        self.l2 = nn.Linear(hidden, hidden)
+        self.out_proj = nn.Linear(hidden, pixel_dim)
+
+        # FiLM projectors (time → scale + shift per layer)
+        self.film1 = nn.Linear(time_dim, 2 * hidden)
+        self.film2 = nn.Linear(time_dim, 2 * hidden)
+        nn.init.zeros_(self.film1.weight); nn.init.zeros_(self.film1.bias)
+        nn.init.zeros_(self.film2.weight); nn.init.zeros_(self.film2.bias)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         flat = x.reshape(B, -1)
-        t_emb = self.time_embed(t)  # (B, 4*model_channels)
-        h = torch.cat([flat, t_emb], dim=-1)
-        out = self.net(h)
+        t_emb = self.time_embed(t)
+
+        h = self.in_proj(flat) + self.time_proj(t_emb)
+
+        # FiLM block 1
+        s1, sh1 = self.film1(t_emb).chunk(2, dim=-1)
+        h = self.l1(h)
+        h = h * (1.0 + s1) + sh1
+        h = torch.nn.functional.gelu(h)
+
+        # FiLM block 2
+        s2, sh2 = self.film2(t_emb).chunk(2, dim=-1)
+        h = self.l2(h)
+        h = h * (1.0 + s2) + sh2
+        h = torch.nn.functional.gelu(h)
+
+        out = self.out_proj(h)
         return out.reshape(B, C, H, W)
 
 
