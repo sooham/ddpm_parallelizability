@@ -444,6 +444,10 @@ def train(config: Config) -> None:
             "train/epoch": epoch,
         })
 
+        # Also save to disk for offline inspection
+        from torchvision.utils import save_image
+        save_image(samples[:16], ckpt_dir / f"samples_epoch_{epoch:04d}.png", nrow=4)
+
         # --- Save checkpoint ---
         if cfg.checkpoint and (epoch % cfg.save_every == 0 or epoch == cfg.epochs):
             _save_checkpoint(ckpt_dir, epoch, model, ema_model, optimizer, config)
