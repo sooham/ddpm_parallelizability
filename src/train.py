@@ -46,12 +46,13 @@ def generate_samples(
     diffusion: GaussianDiffusion,
     shape: tuple,
     device: torch.device,
+    labels: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Generate sample images (in [0, 1]) for logging."""
     diffusion.eval()
-    samples = diffusion.sample(shape, device)
+    samples = diffusion.sample(shape, device, labels)
     diffusion.train()
-    samples = (samples + 1.0) / 2.0  # [-1, 1] -> [0, 1]
+    samples = (samples + 1.0) / 2.0
     samples = torch.clamp(samples, 0.0, 1.0)
     return samples
 
@@ -434,12 +435,17 @@ def train(config: Config) -> None:
         original_model = diffusion.model
         diffusion.model = sampling_model
 
-        n = min(cfg.num_samples, cfg.batch_size)
-        samples = generate_samples(diffusion, (n, in_channels, cfg.image_size, cfg.image_size), device)
-        diffusion.model = original_model
+        num_cls = config.model.num_classes
+        if num_cls > 0:
+            # Generate one sample per class (0..num_cls-1)
+            n = min(num_cls, cfg.num_samples)
+            labels = torch.arange(n, device=device)
+        else:
+            n = min(cfg.num_samples, cfg.batch_size)
+            labels = None
 
-        # Quick sanity: are we getting real images or noise?
-        print(f"  Samples: min={samples.min().item():.2f} max={samples.max().item():.2f} unique={samples.unique().numel()}/{samples.numel()}")
+        samples = generate_samples(diffusion, (n, in_channels, cfg.image_size, cfg.image_size), device, labels)
+        diffusion.model = original_model
 
         grid = _make_image_grid(samples)
         wandb_run.log({

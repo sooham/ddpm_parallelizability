@@ -131,7 +131,7 @@ class GaussianDiffusion(nn.Module):
         return loss, betas_t
 
     @torch.no_grad()
-    def p_sample(self, x_t: torch.Tensor, t: torch.Tensor, t_index: int) -> torch.Tensor:
+    def p_sample(self, x_t: torch.Tensor, t: torch.Tensor, t_index: int, labels: torch.Tensor | None = None) -> torch.Tensor:
         """Single DDPM reverse diffusion step.
 
         Samples x_{t-1} from p_θ(x_{t-1} | x_t).
@@ -149,7 +149,7 @@ class GaussianDiffusion(nn.Module):
         coeff_x0_eps_t = self.coeff_x0_eps[t_index]
 
         # Predict noise
-        eps = self.model(x_t, t)
+        eps = self.model(x_t, t, labels) if labels is not None else self.model(x_t, t)
 
         # Estimate x_0 (Ho et al. Eq. 11)
         # x0 = (x_t − √(1−ᾱ_t)·ε_θ) / √ᾱ_t
@@ -175,7 +175,7 @@ class GaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def ddim_sample_step(
-        self, x_t: torch.Tensor, t: torch.Tensor, t_prev: torch.Tensor, eta: float
+        self, x_t: torch.Tensor, t: torch.Tensor, t_prev: torch.Tensor, eta: float, labels: torch.Tensor | None = None
     ) -> torch.Tensor:
         """Single DDIM reverse diffusion step.
 
@@ -189,7 +189,7 @@ class GaussianDiffusion(nn.Module):
             x_{t-1}: (B, C, H, W) image for the previous DDIM step.
         """
         # Predict noise
-        eps = self.model(x_t, t)
+        eps = self.model(x_t, t, labels) if labels is not None else self.model(x_t, t)
 
         # Get cumulative products
         alpha_bar_t = self.alphas_cumprod[t].view(-1, 1, 1, 1)
@@ -213,41 +213,30 @@ class GaussianDiffusion(nn.Module):
         return x_prev
 
     @torch.no_grad()
-    def sample(self, shape: tuple, device: torch.device) -> torch.Tensor:
-        """Generate images using DDPM or DDIM sampling.
-
-        Args:
-            shape: (B, C, H, W) shape of images to generate.
-            device: torch device.
-
-        Returns:
-            Generated images in [-1, 1] range.
-        """
+    def sample(self, shape: tuple, device: torch.device, labels: torch.Tensor | None = None) -> torch.Tensor:
+        """Generate images using DDPM or DDIM sampling."""
         if self.config.sampler == "ddpm":
-            return self._ddpm_sample(shape, device)
+            return self._ddpm_sample(shape, device, labels)
         elif self.config.sampler == "ddim":
-            return self._ddim_sample(shape, device)
+            return self._ddim_sample(shape, device, labels)
         else:
             raise ValueError(f"Unknown sampler: {self.config.sampler}")
 
     @torch.no_grad()
-    def _ddpm_sample(self, shape: tuple, device: torch.device) -> torch.Tensor:
+    def _ddpm_sample(self, shape: tuple, device: torch.device, labels: torch.Tensor | None = None) -> torch.Tensor:
         """Full DDPM reverse process (T steps)."""
         x = torch.randn(shape, device=device)
-
         for t_index in reversed(range(self.T)):
             t = torch.full((shape[0],), t_index, device=device, dtype=torch.long)
-            x = self.p_sample(x, t, t_index)
-
+            x = self.p_sample(x, t, t_index, labels)
         return x
 
     @torch.no_grad()
-    def _ddim_sample(self, shape: tuple, device: torch.device) -> torch.Tensor:
+    def _ddim_sample(self, shape: tuple, device: torch.device, labels: torch.Tensor | None = None) -> torch.Tensor:
         """Full DDIM reverse process using skipped steps."""
         ddim_steps = min(self.config.ddim_steps, self.T)
         eta = self.config.ddim_eta
 
-        # Create evenly spaced timestep trajectory
         step_ratio = max(1, self.T // ddim_steps)
         times = list(reversed(range(0, self.T, step_ratio)))
         times_next = times[1:] + [0]
@@ -257,6 +246,6 @@ class GaussianDiffusion(nn.Module):
         for t_val, t_prev_val in zip(times, times_next):
             t = torch.full((shape[0],), t_val, device=device, dtype=torch.long)
             t_prev = torch.full((shape[0],), t_prev_val, device=device, dtype=torch.long)
-            x = self.ddim_sample_step(x, t, t_prev, eta)
+            x = self.ddim_sample_step(x, t, t_prev, eta, labels)
 
         return x
