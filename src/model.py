@@ -252,6 +252,11 @@ class UNet(nn.Module):
         time_embed_dim = model_channels * 4
         self.time_embed = TimeEmbedding(model_channels, model_channels)
 
+        # Class embedding (added to time embedding for conditioning)
+        self.num_classes = config.num_classes
+        if self.num_classes > 0:
+            self.class_embed = nn.Embedding(self.num_classes, time_embed_dim)
+
         # Input projection
         self.input_conv = nn.Conv2d(in_channels, model_channels, kernel_size=3, padding=1)
 
@@ -309,17 +314,20 @@ class UNet(nn.Module):
         self.out_act = nn.SiLU()
         self.out_conv = nn.Conv2d(ch, out_channels, kernel_size=3, padding=1)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass.
 
         Args:
             x: (B, C, H, W) noisy input.
             t: (B,) timestep indices.
+            labels: (B,) optional class labels for conditioning.
 
         Returns:
             (B, C, H, W) predicted noise (epsilon prediction).
         """
         t_emb = self.time_embed(t)
+        if labels is not None and self.num_classes > 0:
+            t_emb = t_emb + self.class_embed(labels)
 
         h = self.input_conv(x)
 
@@ -378,10 +386,17 @@ class SimpleMLP(nn.Module):
         nn.init.zeros_(self.film1.weight); nn.init.zeros_(self.film1.bias)
         nn.init.zeros_(self.film2.weight); nn.init.zeros_(self.film2.bias)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        # Class embedding (added to time embedding for conditioning)
+        self.num_classes = config.num_classes
+        if self.num_classes > 0:
+            self.class_embed = nn.Embedding(self.num_classes, time_dim)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor | None = None) -> torch.Tensor:
         B, C, H, W = x.shape
         flat = x.reshape(B, -1)
         t_emb = self.time_embed(t)
+        if labels is not None and self.num_classes > 0:
+            t_emb = t_emb + self.class_embed(labels)
 
         h = self.in_proj(flat) + self.time_proj(t_emb)
 
@@ -423,6 +438,11 @@ class MLPDenoiser(nn.Module):
         time_out = config.model_channels * 4
         self.time_proj = nn.Linear(time_out, time_dim)
 
+        # Class embedding (added to time embedding)
+        self.num_classes = config.num_classes
+        if self.num_classes > 0:
+            self.class_embed = nn.Embedding(self.num_classes, time_out)
+
         if activation == "gelu":
             self.act = nn.GELU()
         elif activation == "relu":
@@ -461,7 +481,7 @@ class MLPDenoiser(nn.Module):
 
         self._built = True
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor | None = None) -> torch.Tensor:
         B, C, H, W = x.shape
         if not self._built:
             self._build(x)
@@ -471,6 +491,8 @@ class MLPDenoiser(nn.Module):
         h = self.input_proj(torch.cat([flat, pos], dim=-1))
 
         t_emb = self.time_embed(t)
+        if labels is not None and self.num_classes > 0:
+            t_emb = t_emb + self.class_embed(labels)
         t_emb = self.time_proj(t_emb)
 
         for block in self.blocks:
@@ -501,6 +523,11 @@ class MLPDenoiser(nn.Module):
         self.time_embed = TimeEmbedding(config.model_channels, config.model_channels)
         time_out = config.model_channels * 4
         self.time_proj = nn.Linear(time_out, time_dim)
+
+        # Class embedding (added to time embedding)
+        self.num_classes = config.num_classes
+        if self.num_classes > 0:
+            self.class_embed = nn.Embedding(self.num_classes, time_out)
 
         if activation == "gelu":
             self.act = nn.GELU()
@@ -538,7 +565,7 @@ class MLPDenoiser(nn.Module):
 
         self._built = True
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor | None = None) -> torch.Tensor:
         B, C, H, W = x.shape
         if not self._built:
             self._build(x)
@@ -548,6 +575,8 @@ class MLPDenoiser(nn.Module):
         h = self.input_proj(torch.cat([flat, pos], dim=-1))
 
         t_emb = self.time_embed(t)
+        if labels is not None and self.num_classes > 0:
+            t_emb = t_emb + self.class_embed(labels)
         t_emb = self.time_proj(t_emb)
 
         for block in self.blocks:

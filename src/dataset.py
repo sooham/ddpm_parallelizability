@@ -42,8 +42,8 @@ class CircleDataset(Dataset):
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        return self.img.clone()
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
+        return self.img.clone(), 0  # circle has no classes — use dummy label
 
 
 class HFDiffusionDataset(Dataset):
@@ -80,10 +80,11 @@ class HFDiffusionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.hf_dataset)
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         example = self.hf_dataset[idx]
         img = example[self._key]
-        return self.transform(img)
+        label = example["label"] if "label" in example else 0
+        return self.transform(img), label
 
 
 def create_dataloader(

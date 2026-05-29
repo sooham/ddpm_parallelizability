@@ -37,6 +37,10 @@ class ModelConfig:
     # Whether to use attention at all resolutions (ignored if attention_resolutions is set)
     attention_all: bool = False
 
+    # ---- Class conditioning ----
+    # Number of classes (0 = unconditional).  MNIST=10, CIFAR-10=10.
+    num_classes: int = 0
+
     # ---- MLP specific ----
     # Hidden layer dimensions (e.g., [1024, 2048, 1024])
     mlp_hidden_dims: tuple[int, ...] = (1024, 2048, 1024)

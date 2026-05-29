@@ -103,13 +103,14 @@ class GaussianDiffusion(nn.Module):
 
         return sqrt_alpha * x0 + sqrt_one_minus * noise
 
-    def training_loss(self, x0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def training_loss(self, x0: torch.Tensor, labels: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute the simplified DDPM training loss.
 
-        L_simple = E_{t, x_0, ε} [ ||ε - ε_θ(x_t, t)||^2 ]
+        L_simple = E_{t, x_0, ε} [ ||ε - ε_θ(x_t, t, y)||^2 ]
 
         Args:
             x0: (B, C, H, W) clean images.
+            labels: (B,) optional class labels for conditioning.
 
         Returns:
             (loss, betas_t): Scalar MSE loss and the β values for the sampled timesteps.
@@ -117,20 +118,14 @@ class GaussianDiffusion(nn.Module):
         B = x0.shape[0]
         device = x0.device
 
-        # Sample random timesteps
         t = torch.randint(0, self.T, (B,), device=device)
-        betas_t = self.betas[t]  # (B,)
+        betas_t = self.betas[t]
 
-        # Sample noise
         noise = torch.randn_like(x0)
-
-        # Forward process: get x_t
         x_t = self.q_sample(x0, t, noise)
 
-        # Model predicts the noise
-        predicted_noise = self.model(x_t, t)
+        predicted_noise = self.model(x_t, t, labels) if labels is not None else self.model(x_t, t)
 
-        # MSE loss
         loss = F.mse_loss(predicted_noise, noise)
 
         return loss, betas_t

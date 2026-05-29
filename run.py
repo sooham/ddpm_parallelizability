@@ -62,6 +62,8 @@ def main():
                         help="Activation function for MLP hidden layers")
     parser.add_argument("--dropout", type=float, default=0.1,
                         help="Dropout rate")
+    parser.add_argument("--num-classes", type=int, default=0,
+                        help="Number of classes for conditioning (0=unconditional, 10 for MNIST/CIFAR-10)")
 
     # Diffusion
     parser.add_argument("--timesteps", type=int, default=1000,
@@ -108,6 +110,7 @@ def main():
             num_res_blocks=args.num_res_blocks,
             attention_resolutions=(16,),
             dropout=args.dropout,
+            num_classes=args.num_classes,
             mlp_hidden_dims=tuple(args.mlp_hidden_dims),
             mlp_activation=args.mlp_activation,
         ),

@@ -70,7 +70,7 @@ def _count_flops_per_batch(diffusion, x0: torch.Tensor) -> int:
     model.train()
 
     with FlopCounterMode(depth=2, display=False) as fcm:
-        loss, _betas = diffusion.training_loss(x0)
+        loss, _betas = diffusion.training_loss(x0, None)  # unconditional FLOP count
         loss.backward()
 
     # Wipe the backward's .grad so the real training starts clean
@@ -144,7 +144,7 @@ def train(config: Config) -> None:
     )
 
     # Determine in_channels from data (1 for grayscale, 3 for RGB)
-    sample_batch = next(iter(train_loader))
+    sample_batch, _ = next(iter(train_loader))
     in_channels = sample_batch.shape[1]
     train_size = len(train_loader.dataset)
     test_loader = create_dataloader(
@@ -304,22 +304,22 @@ def train(config: Config) -> None:
 
         t0_window = time.time()  # wall-clock window start
 
-        for batch_idx, batch in enumerate(train_loader, 1):
+        for batch_idx, (batch, labels) in enumerate(train_loader, 1):
             # Align device span with wall clock (first batch of each window)
             if Event is not None and win_start_ev is None:
                 win_start_ev = Event(enable_timing=True)
                 win_end_ev = Event(enable_timing=True)
                 win_start_ev.record()
 
-            x0 = batch.to(device)
+            x0, labs = batch.to(device), labels.to(device)
 
             optimizer.zero_grad()
 
             if use_amp:
                 with torch.autocast(device.type, dtype=amp_dtype):
-                    loss, betas_t = diffusion.training_loss(x0)
+                    loss, betas_t = diffusion.training_loss(x0, labs)
             else:
-                loss, betas_t = diffusion.training_loss(x0)
+                loss, betas_t = diffusion.training_loss(x0, labs)
 
             if scaler is not None:
                 scaler.scale(loss).backward()
